@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"log"
 	"net/http"
 	"os"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
-	"github.com/google/uuid"
-
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -22,6 +23,7 @@ type apiConfig struct {
 	s3Region         string
 	s3CfDistribution string
 	port             string
+	s3Client         *s3.Client
 }
 
 type thumbnail struct {
@@ -29,10 +31,22 @@ type thumbnail struct {
 	mediaType string
 }
 
-var videoThumbnails = map[uuid.UUID]thumbnail{}
-
 func main() {
 	godotenv.Load(".env")
+
+	region := os.Getenv("S3_REGION")
+	if region == "" {
+		log.Fatal("S3_REGION environment variable is not set")
+	}
+	awsConfig, err := config.LoadDefaultConfig(
+		context.Background(),
+		config.WithRegion(region),
+		config.WithSharedConfigProfile(os.Getenv("AWS_PROFILE")),
+	)
+	if err != nil {
+		log.Fatalf("Couldn't load AWS config: %v", err)
+	}
+	s3Client := s3.NewFromConfig(awsConfig)
 
 	pathToDB := os.Getenv("DB_PATH")
 	if pathToDB == "" {
@@ -94,6 +108,7 @@ func main() {
 		s3Region:         s3Region,
 		s3CfDistribution: s3CfDistribution,
 		port:             port,
+		s3Client:         s3Client,
 	}
 
 	err = cfg.ensureAssetsDir()

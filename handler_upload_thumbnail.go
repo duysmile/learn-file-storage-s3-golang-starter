@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -15,7 +13,7 @@ import (
 )
 
 const (
-	maxMemory = 10 << 20 // 10 MB
+	maxThumbnailMemory = 10 << 20 // 10 MB
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +38,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	err = r.ParseMultipartForm(maxMemory)
+	err = r.ParseMultipartForm(maxThumbnailMemory)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse multipart form", err)
 		return
@@ -51,6 +49,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Couldn't get file from form", err)
 		return
 	}
+	defer file.Close()
 
 	mediaType := fileHeader.Header.Get("Content-Type")
 	mimeType, _, err := mime.ParseMediaType(mediaType)
@@ -79,16 +78,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	extension := GetMediaExtension(mimeType)
-	randomFileNameB := make([]byte, 32)
-	_, err = rand.Read(randomFileNameB)
+	fileName, err := GetRandomFileName(GetMediaExtension(mediaType))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random file name", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate file name", err)
 		return
 	}
-
-	randomFileName := base64.RawURLEncoding.EncodeToString(randomFileNameB)
-	fileName := fmt.Sprintf("%s%s", randomFileName, extension)
 	filePath := cfg.GetAssetPath(fileName)
 
 	f, err := os.Create(filePath)
