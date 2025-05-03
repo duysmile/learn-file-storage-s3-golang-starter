@@ -106,17 +106,32 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ratio, err := GetVideoAspectRatio(localFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
+		return
+	}
+
+	prefixS3 := "other"
+	if ratio == "16:9" {
+		prefixS3 = "landscape"
+	} else if ratio == "9:16" {
+		prefixS3 = "portrait"
+	}
+
 	_, err = localFile.Seek(0, 0)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't seek file", err)
 		return
 	}
 
+	fullFileName := fmt.Sprintf("%s/%s", prefixS3, fileName)
+
 	_, err = cfg.s3Client.PutObject(
 		r.Context(),
 		&s3.PutObjectInput{
 			Bucket:      aws.String(cfg.s3Bucket),
-			Key:         aws.String(fileName),
+			Key:         aws.String(fullFileName),
 			Body:        localFile,
 			ContentType: aws.String(mimeType),
 		},
@@ -126,7 +141,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := cfg.GetS3URL(fileName)
+	videoURL := cfg.GetS3URL(fullFileName)
 	video.VideoURL = &videoURL
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
