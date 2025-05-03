@@ -2,13 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type FfProbeStreamOutput struct {
@@ -151,4 +155,44 @@ func GetVideoAspectRatio(filePath string) (string, error) {
 	}
 
 	return ffProbeOutput.Streams[0].DisplayAspectRatio, nil
+}
+
+func ProcessVideoForFastStart(filePath string) (string, error) {
+	outputPath := fmt.Sprintf("%s.processing", filePath)
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4",
+		"-y", outputPath,
+	)
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg error: %w", err)
+	}
+
+	return outputPath, nil
+}
+
+func GeneratePresignS3URL(
+	client *s3.Client,
+	bucket, key string,
+	expirationTime time.Duration,
+) (string, error) {
+	pClient := s3.NewPresignClient(client)
+	presignURL, err := pClient.PresignGetObject(
+		context.TODO(),
+		&s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		},
+		s3.WithPresignExpires(expirationTime),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to presign URL: %w", err)
+	}
+
+	return presignURL.URL, nil
 }

@@ -7,11 +7,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -119,11 +121,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		prefixS3 = "portrait"
 	}
 
-	_, err = localFile.Seek(0, 0)
+	processedVideoPath, err := ProcessVideoForFastStart(localFile.Name())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't seek file", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video", err)
 		return
 	}
+	defer os.Remove(processedVideoPath)
+
+	processedFile, err := os.Open(processedVideoPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed video", err)
+		return
+	}
+	defer processedFile.Close()
 
 	fullFileName := fmt.Sprintf("%s/%s", prefixS3, fileName)
 
@@ -132,7 +142,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		&s3.PutObjectInput{
 			Bucket:      aws.String(cfg.s3Bucket),
 			Key:         aws.String(fullFileName),
-			Body:        localFile,
+			Body:        processedFile,
 			ContentType: aws.String(mimeType),
 		},
 	)
@@ -149,10 +159,36 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, video)
+	signedVideo, err := cfg.dbVideoToSignedVideo(video)
+
+	respondWithJSON(w, http.StatusOK, signedVideo)
 	return
 }
 
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (*database.Video, error) {
+	if video.VideoURL == nil {
+		return &video, nil
+	}
+
+	parts := strings.Split(*video.VideoURL, ",")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("Invalid video URL: %s", *video.VideoURL)
+	}
+
+	presignURL, err := GeneratePresignS3URL(
+		cfg.s3Client,
+		parts[0],
+		parts[1],
+		time.Hour*24,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't generate presign URL: %w", err)
+	}
+
+	video.VideoURL = &presignURL
+	return &video, nil
+}
+
 func (cfg *apiConfig) GetS3URL(object string) string {
-	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, object)
+	return fmt.Sprintf("%s,%s", cfg.s3Bucket, object)
 }
